@@ -42,8 +42,21 @@ class SMPPLogger:
         return log_data
     
     def _write_json_log(self, log_data: Dict[str, Any]) -> None:
-        with open(f"{LOG_DIR}/smpp_log.jsonl", "a") as f:
-            f.write(json.dumps(log_data) + "\n")
+        """
+        Записує лог у форматі JSON у файл з правильним кодуванням
+        """
+        try:
+            with open(f"{LOG_DIR}/smpp_log.jsonl", "a", encoding="cp1251") as f:
+                f.write(json.dumps(log_data, ensure_ascii=False) + "\n")
+        except Exception as e:
+            # Запасний варіант, якщо виникла помилка при запису
+            print(f"Помилка запису логу: {e}")
+            try:
+                with open(f"{LOG_DIR}/smpp_log.jsonl", "a", encoding="utf-8", errors="replace") as f:
+                    f.write(json.dumps(log_data, ensure_ascii=True) + "\n")
+            except Exception as e2:
+                print(f"Критична помилка запису логу: {e2}")
+
     
     def info(self, message: str, extra: Optional[Dict[str, Any]] = None) -> None:
         log_data = self._format_log("INFO", message, extra)

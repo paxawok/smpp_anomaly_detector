@@ -47,9 +47,9 @@ class DecisionEngine:
         
         # Порогові значення для прийняття рішень
         self.thresholds = self.config.get("thresholds", {
-            "block": 0.8,      # Блокувати, якщо оцінка ризику >= 0.8
-            "suspicious": 0.5,  # Підозріло, якщо оцінка ризику >= 0.5
-            "allow": 0.0       # Дозволити, якщо оцінка ризику < 0.5
+            "block": 0.7,      # Блокувати, якщо оцінка ризику >= 0.7
+            "suspicious": 0.4,  # Підозріло, якщо оцінка ризику >= 0.4
+            "allow": 0.0       # Дозволити, якщо оцінка ризику < 0.4
         })
         
         # Ваги для різних типів аналізу
@@ -57,7 +57,7 @@ class DecisionEngine:
             "content": 1.0,
             "url": 1.0,
             "blacklist": 1.0,
-            "geo": 1.0,
+            "geo": 3.0,
             "rate": 0.7
         })
         
@@ -76,15 +76,15 @@ class DecisionEngine:
                 default_config = {
                     "default_decision": "allow",
                     "thresholds": {
-                        "block": 0.8,
-                        "suspicious": 0.5,
+                        "block": 0.7,
+                        "suspicious": 0.4,
                         "allow": 0.0
                     },
                     "weights": {
                         "content": 1.0,
                         "url": 1.0,
                         "blacklist": 1.0,
-                        "geo": 1.0,
+                        "geo": 3.0,
                         "rate": 0.7
                     },
                     "override_rules": [
@@ -202,6 +202,10 @@ class DecisionEngine:
                 
                 if geo_result["category"] not in result["tags"]:
                     result["tags"].append(geo_result["category"])
+                logger.warning(
+                    f"Виявлено заблокований регіон для номера {destination_addr}: "
+                    f"регіон: {geo_result['region']}, категорія: {geo_result['category']}"
+                )
             
             # Аналіз частоти
             rate_result = await self.rate_limiter.check_rate_limit(source_addr, destination_addr)
@@ -260,6 +264,10 @@ class DecisionEngine:
         Застосовує правила перевизначення
         Повертає рішення, якщо правило застосовано, інакше None
         """
+        # Явне перевизначення для заблокованих регіонів
+        if result["analysis"].get("geo", {}).get("is_blocked", False):
+            return "block"
+        
         for rule in self.config.get("override_rules", []):
             condition = rule.get("condition")
             if not condition:

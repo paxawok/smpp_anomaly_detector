@@ -1,8 +1,7 @@
 import time
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Tuple
-
+from typing import Dict, Tuple, Any
 
 class RateLimiter:
     """
@@ -139,6 +138,38 @@ class RateLimiter:
                 return count
             
             return 0
+    
+    async def check_rate_limit(self, source_addr: str, destination_addr: str) -> Dict[str, Any]:
+        """
+        Перевіряє обмеження частоти для відправника та отримувача
+        
+        Args:
+            source_addr: Адреса відправника
+            destination_addr: Адреса отримувача
+            
+        Returns:
+            Dict[str, Any]: Результат перевірки у форматі
+                        {"exceeded": bool, "count": int, "limit": int, "risk_score": float}
+        """
+        with self.lock:
+            # Перевіряємо лічильник для отримувача
+            count = self.get_count(destination_addr)
+            
+            # Збільшуємо лічильник
+            new_count = self.increment(destination_addr)
+            
+            # Визначаємо, чи перевищено ліміт
+            exceeded = new_count > self.daily_limit
+            
+            # Обчислюємо оцінку ризику на основі відношення до ліміту
+            risk_score = min(1.0, new_count / self.daily_limit * 0.8)
+            
+            return {
+                "exceeded": exceeded,
+                "count": new_count,
+                "limit": self.daily_limit,
+                "risk_score": risk_score
+            }
     
     def reset(self, destination_number: str = None) -> None:
         """

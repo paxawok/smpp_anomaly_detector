@@ -69,24 +69,39 @@ class GeoChecker:
         
         Args:
             phone_number: Номер телефону для перевірки
-            
+                
         Returns:
             dict: Результат перевірки
         """
-        # Нормалізуємо номер телефону
+        # Нормалізуємо номер телефону - видаляємо все, крім цифр та '+'
         normalized_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
         
-        # Перевіряємо префікси
+        # Додаємо '+' на початку, якщо його немає
+        if not normalized_number.startswith('+'):
+            normalized_number = '+' + normalized_number
+        
+        # Виводимо детальну інформацію для відлагодження
+        print(f"GeoChecker: перевірка номеру {normalized_number}")
+        
+        # Перевіряємо префікси для блокування
         for prefix in self.restricted_prefixes:
-            if normalized_number.startswith(prefix):
+            # Переконаємося, що normalized_number та prefix мають однаковий формат (з '+' або без)
+            if prefix.startswith('+') and not normalized_number.startswith('+'):
+                check_prefix = prefix[1:]  # Видаляємо '+' з prefix
+            elif not prefix.startswith('+') and normalized_number.startswith('+'):
+                check_prefix = '+' + prefix  # Додаємо '+' до prefix
+            else:
+                check_prefix = prefix
+            
+            if normalized_number.startswith(check_prefix) or normalized_number.startswith(prefix):
+                print(f"GeoChecker: ЗАБЛОКОВАНО - номер {normalized_number} має префікс {prefix}")
+                
                 return {
                     "is_blocked": True,
-                    "risk_score": 1.0,
+                    "risk_score": 1.0,  # Максимальний ризик для заблокованих регіонів
                     "category": "restricted_region",
                     "region": "occupied_territory"
                 }
-        
-        # Додаткові перевірки MCC/MNC можна додати тут
         
         # Якщо номер не заблоковано
         return {

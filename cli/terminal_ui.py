@@ -86,7 +86,8 @@ class TerminalMonitor:
             if not os.path.exists(self.log_file):
                 return new_logs
                 
-            with open(self.log_file, "r", encoding="utf-8") as f:
+            # Змінюємо кодування з utf-8 на cp1251 та додаємо обробку помилок
+            with open(self.log_file, "r", encoding="cp1251", errors="replace") as f:
                 # Перемотуємо до останньої прочитаної позиції
                 f.seek(self.last_log_position)
                 
@@ -101,6 +102,10 @@ class TerminalMonitor:
                 # Оновлюємо позицію
                 self.last_log_position = f.tell()
                 
+            return new_logs
+            
+        except Exception as e:
+            logger.error(f"Помилка читання логів: {e}")
             return new_logs
             
         except Exception as e:

@@ -1,15 +1,15 @@
 {
   "default_decision": "allow",
   "thresholds": {
-    "block": 0.8,
-    "suspicious": 0.5,
+    "block": 0.7,
+    "suspicious": 0.4,
     "allow": 0.0
   },
   "weights": {
     "content": 1.0,
     "url": 1.0,
     "blacklist": 1.0,
-    "geo": 1.0,
+    "geo": 3.0,
     "rate": 0.7
   },
   "override_rules": [

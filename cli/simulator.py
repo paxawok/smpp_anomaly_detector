@@ -156,6 +156,49 @@ class SMPPTrafficSimulator:
         
         logger.info(f"Симуляцію завершено. Відправлено {message_count} повідомлень")
     
+    async def send_custom_message(
+        self,
+        source_addr: str,
+        destination_addr: str,
+        short_message: str,
+        verbose: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Відправляє вказане повідомлення
+        """
+        if not self.client:
+            logger.error("Клієнт не ініціалізовано, спочатку викличте connect()")
+            return {"error": "Клієнт не ініціалізовано"}
+            
+        if verbose:
+            logger.info(
+                f"Відправлення користувацького повідомлення: "
+                f"{source_addr} -> {destination_addr}: "
+                f"{short_message[:30]}..."
+            )
+        
+        try:
+            result = await self.client.submit_sm(
+                source_addr=source_addr,
+                destination_addr=destination_addr,
+                short_message=short_message
+            )
+            
+            if verbose:
+                status_code = result.get("command_status")
+                if status_code == 0:
+                    logger.info(f"Повідомлення успішно відправлено")
+                elif status_code == 0x00000045:  # ESME_RREJECTMSG
+                    logger.warning(f"Повідомлення заблоковано системою")
+                else:
+                    logger.warning(f"Статус відправлення: {status_code}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Помилка при відправленні повідомлення: {e}")
+            return {"error": str(e)}
+    
     def _generate_normal_messages(self) -> Dict[str, Any]:
         """
         Генерує звичайне повідомлення
@@ -376,6 +419,12 @@ async def main():
                         help="Інтервал між повідомленнями в секундах")
     parser.add_argument("--verbose", "-v", action="store_true", help="Детальний вивід")
     
+    # Додаткові аргументи для ручного тестування
+    parser.add_argument("--dest-prefix", help="Префікс номера отримувача (для тестування блокування за географією)")
+    parser.add_argument("--destination", help="Повний номер отримувача")
+    parser.add_argument("--source", help="Ім'я відправника (для тестування чорного списку)")
+    parser.add_argument("--text", help="Текст повідомлення (для ручного тестування)")
+    
     args = parser.parse_args()
     
     # Створюємо і запускаємо симулятор
@@ -390,13 +439,49 @@ async def main():
     try:
         # З'єднуємося з сервером
         if await simulator.connect():
-            # Запускаємо симуляцію
-            await simulator.run_simulation(
-                traffic_type=args.type,
-                message_count=args.count,
-                interval=args.interval,
-                verbose=args.verbose
-            )
+            # Перевіряємо, чи вказані спеціальні параметри для тестування
+            if args.dest_prefix or args.destination or args.source or args.text:
+                # Ручний режим тестування
+                source = args.source or random.choice(["ServiceTest", "NormalSender"])
+                
+                # Формуємо номер
+                if args.destination:
+                    destination = args.destination
+                elif args.dest_prefix:
+                    destination = args.dest_prefix + ''.join(random.choices(string.digits, k=7))
+                else:
+                    destination = "38" + random.choice(simulator.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
+                
+                # Текст повідомлення
+                message = args.text or "Тестове повідомлення для ручного тестування"
+                
+                print(f"Ручне тестування:")
+                print(f"Відправник: {source}")
+                print(f"Отримувач: {destination}")
+                print(f"Повідомлення: {message}")
+                
+                # Відправляємо повідомлення
+                result = await simulator.send_custom_message(
+                    source_addr=source,
+                    destination_addr=destination,
+                    short_message=message
+                )
+                
+                # Перевіряємо результат
+                if result.get("command_status") == 0:
+                    print("✅ Результат: ДОЗВОЛЕНО")
+                elif result.get("command_status") == 0x00000045:  # ESME_RREJECTMSG
+                    print("❌ Результат: ЗАБЛОКОВАНО")
+                else:
+                    print(f"⚠️ Результат: {result}")
+            else:
+                # Стандартний режим симуляції
+                await simulator.run_simulation(
+                    traffic_type=args.type,
+                    message_count=args.count,
+                    interval=args.interval,
+                    verbose=args.verbose
+                )
         
     except KeyboardInterrupt:
         print("\nСимуляцію перервано користувачем")
