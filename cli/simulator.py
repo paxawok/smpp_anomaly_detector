@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Tuple
 # Додаємо батьківський каталог до шляху для імпорту
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 from smpp_proxy.client import SMPPClient
 
 logger = SMPPLogger("simulator")
@@ -161,7 +161,7 @@ class SMPPTrafficSimulator:
         Генерує звичайне повідомлення
         """
         sender = random.choice(self.normal_senders)
-        destination = "380" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
+        destination = "38" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
         
         templates = [
             "Ваш код підтвердження: {code}. Нікому його не повідомляйте.",
@@ -200,7 +200,7 @@ class SMPPTrafficSimulator:
         
         # 75% нормальних номерів, 25% підозрілих
         if random.random() < 0.75:
-            destination = "380" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
+            destination = "38" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
         else:
             destination = random.choice(self.suspicious_prefixes) + ''.join(random.choices(string.digits, k=8))
         
@@ -245,7 +245,7 @@ class SMPPTrafficSimulator:
         ]
         
         sender = random.choice(bank_senders)
-        destination = "380" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
+        destination = "38" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
         
         templates = [
             "Ваша картка {card} заблокована! Для розблокування перейдіть: {url}",
@@ -294,7 +294,7 @@ class SMPPTrafficSimulator:
         # Для flood використовуємо один і той же номер або невелику групу номерів
         if not hasattr(self, '_flood_destinations'):
             self._flood_destinations = [
-                "380" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
+                "38" + random.choice(self.normal_prefixes) + ''.join(random.choices(string.digits, k=7))
                 for _ in range(3)
             ]
         

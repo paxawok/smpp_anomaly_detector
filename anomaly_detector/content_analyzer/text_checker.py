@@ -4,7 +4,7 @@ import json
 import Levenshtein
 from typing import Dict, List, Tuple, Set, Any, Optional
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 
 logger = SMPPLogger("text_checker")
 

@@ -1,0 +1,95 @@
+{
+  "phishing": {
+    "keywords": [
+      "password",
+      "пароль",
+      "verify",
+      "verification",
+      "account",
+      "security",
+      "blocked",
+      "verify",
+      "безпека",
+      "bank",
+      "банк",
+      "credit",
+      "card",
+      "картка",
+      "monobank",
+      "приватбанк",
+      "verify",
+      "code",
+      "код",
+      "activate",
+      "update",
+      "urgent",
+      "терміново"
+    ],
+    "weight": 0.7,
+    "threshold": 2
+  },
+  "spam": {
+    "keywords": [
+      "free",
+      "bonus",
+      "discount",
+      "sale",
+      "offer",
+      "promocode",
+      "бесплатно",
+      "акція",
+      "знижка",
+      "розпродаж",
+      "пропозиція",
+      "промокод",
+      "скидка",
+      "выгода",
+      "спеццена",
+      "успей"
+    ],
+    "weight": 0.4,
+    "threshold": 3
+  },
+  "fraud": {
+    "keywords": [
+      "win",
+      "prize",
+      "lottery",
+      "lucky",
+      "money",
+      "cash",
+      "виграш",
+      "приз",
+      "лотерея",
+      "гроші",
+      "jackpot",
+      "congratulations",
+      "вітаємо",
+      "поздравляем",
+      "casino",
+      "казино",
+      "betting",
+      "ставки",
+      "sports betting"
+    ],
+    "weight": 0.6,
+    "threshold": 2
+  },
+  "adult": {
+    "keywords": [
+      "adult",
+      "xxx",
+      "sex",
+      "dating",
+      "18+",
+      "hot",
+      "sexy",
+      "знакомства",
+      "побачення",
+      "date",
+      "intimate"
+    ],
+    "weight": 0.5,
+    "threshold": 2
+  }
+}

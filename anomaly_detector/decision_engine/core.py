@@ -3,7 +3,7 @@ import os
 import asyncio
 from typing import Dict, List, Tuple, Any, Optional, Set, Union
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 
 # Імпортуємо аналізатори
 from anomaly_detector.content_analyzer.text_checker import TextChecker

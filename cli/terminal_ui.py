@@ -14,7 +14,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Імпортуємо компоненти системи
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 from storage.redis_client import RedisClient
 
 # Налаштування для colorama для Windows

@@ -4,7 +4,7 @@ import json
 import urllib.parse
 from typing import Dict, List, Tuple, Any, Optional, Set
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 
 logger = SMPPLogger("url_checker")
 

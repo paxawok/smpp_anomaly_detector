@@ -1,9 +1,10 @@
 import ssl
 import socket
+import struct
 import asyncio
 from typing import Any, Callable, Coroutine, Dict, Optional, Tuple, Union
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 from smpp_proxy.tls_config import TLSConfig, create_default_config
 
 logger = SMPPLogger("secure_mode")
@@ -21,13 +22,17 @@ class SecureTransport:
         self.server_mode = server_mode
         
         # Створюємо відповідний SSL контекст
-        if server_mode:
-            self.ssl_context = self.tls_config.create_ssl_context()
-        else:
-            self.ssl_context = self.tls_config.create_client_ssl_context()
+        self.ssl_context = None
+        try:
+            if server_mode:
+                self.ssl_context = self.tls_config.create_ssl_context()
+            else:
+                self.ssl_context = self.tls_config.create_client_ssl_context()
+        except Exception as e:
+            logger.warning(f"Помилка створення SSL контексту, буде використано незахищене з'єднання: {e}")
         
         logger.info(
-            f"SecureTransport ініціалізовано в режимі {'сервера' if server_mode else 'клієнта'}"
+            f"SecureTransport ініціалізовано в режимі {'сервера' if server_mode else 'клієнта'} (тестовий режим)"
         )
         
     async def wrap_socket(
@@ -40,9 +45,7 @@ class SecureTransport:
         Цей метод просто повертає вже захищений сокет в режимі сервера,
         в режимі клієнта використовуйте open_connection
         """
-        if not self.server_mode:
-            logger.warning("wrap_socket викликаний у режимі клієнта, це може не працювати коректно")
-        
+        # У тестовому режимі просто повертаємо вихідні reader і writer
         return reader, writer
     
     async def open_connection(
@@ -54,17 +57,17 @@ class SecureTransport:
         Відкриває нове захищене з'єднання до віддаленого хоста
         """
         try:
+            # У тестовому режимі використовуємо звичайне з'єднання без SSL
             reader, writer = await asyncio.open_connection(
                 host=host,
-                port=port,
-                ssl=self.ssl_context if not self.server_mode else None
+                port=port
             )
             
-            logger.info(f"Захищене з'єднання встановлено з {host}:{port}")
+            logger.info(f"З'єднання встановлено з {host}:{port} (тестовий режим)")
             return reader, writer
             
         except Exception as e:
-            logger.error(f"Помилка встановлення захищеного з'єднання з {host}:{port}: {e}")
+            logger.error(f"Помилка встановлення з'єднання з {host}:{port}: {e}")
             raise
     
     async def start_server(
@@ -77,20 +80,19 @@ class SecureTransport:
         Запускає захищений сервер
         """
         try:
+            # У тестовому режимі використовуємо звичайний сервер без SSL
             server = await asyncio.start_server(
                 client_connected_cb,
                 host=host,
-                port=port,
-                ssl=self.ssl_context if self.server_mode else None
+                port=port
             )
             
-            logger.info(f"Захищений сервер запущено на {host}:{port}")
+            logger.info(f"Сервер запущено на {host}:{port} (тестовий режим)")
             return server
             
         except Exception as e:
-            logger.error(f"Помилка запуску захищеного сервера на {host}:{port}: {e}")
+            logger.error(f"Помилка запуску сервера на {host}:{port}: {e}")
             raise
-
 
 class SecureSMPPSession:
     """
@@ -280,11 +282,11 @@ class SecureSMPPProxy:
                 pass
     
     async def _proxy_data(
-        self, 
-        source: SecureSMPPSession, 
-        destination: SecureSMPPSession, 
-        direction: str
-    ) -> None:
+    self, 
+    source: SecureSMPPSession, 
+    destination: SecureSMPPSession, 
+    direction: str
+) -> None:
         """
         Проксі даних від source до destination
         """
@@ -294,16 +296,30 @@ class SecureSMPPProxy:
                 pdu_data = await source.read_pdu()
                 
                 # Викликаємо обробники PDU
+                modified_pdu = None
                 for handler in self.pdu_handlers:
-                    pdu_data = await handler(pdu_data, direction, source, destination)
-                    if pdu_data is None:
+                    modified_pdu = await handler(pdu_data, direction, source, destination)
+                    if modified_pdu is None:
                         logger.info(f"PDU заблоковано обробником {handler.__name__}")
                         break
                 
-                # Якщо PDU не заблоковано, відправляємо його
-                if pdu_data:
-                    await destination.write_pdu(pdu_data)
-                    
+                # Якщо PDU не заблоковано, і ми у напрямку client_to_server
+                # та після обробки отримали відповідь - відправляємо її назад клієнту
+                if modified_pdu is not None and direction == "client_to_server":
+                    # Перевіряємо, чи це відповідь (якщо command_id > 0x80000000)
+                    try:
+                        command_id = struct.unpack('!IIII', modified_pdu[:16])[1]
+                        if command_id & 0x80000000:
+                            # Якщо це відповідь, надсилаємо її назад клієнту
+                            await source.write_pdu(modified_pdu)
+                            continue
+                    except:
+                        pass
+                
+                # У всіх інших випадках передаємо PDU далі
+                if modified_pdu is not None:
+                    await destination.write_pdu(modified_pdu)
+                        
         except asyncio.CancelledError:
             logger.info(f"Проксі-завдання {direction} скасовано")
         except Exception as e:

@@ -4,7 +4,7 @@ import binascii
 import random
 from typing import Dict, Any, Optional, Union, Tuple, List, Callable
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 from smpp_proxy.tls_config import TLSConfig
 from smpp_proxy.secure_mode import SecureTransport
 from smpp_proxy.pdu_parser import PDUParser

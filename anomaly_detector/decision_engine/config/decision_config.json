@@ -1,0 +1,29 @@
+{
+  "default_decision": "allow",
+  "thresholds": {
+    "block": 0.8,
+    "suspicious": 0.5,
+    "allow": 0.0
+  },
+  "weights": {
+    "content": 1.0,
+    "url": 1.0,
+    "blacklist": 1.0,
+    "geo": 1.0,
+    "rate": 0.7
+  },
+  "override_rules": [
+    {
+      "condition": "blacklist.is_blacklisted",
+      "decision": "block"
+    },
+    {
+      "condition": "geo.is_blocked",
+      "decision": "block"
+    },
+    {
+      "condition": "url.is_malicious",
+      "decision": "block"
+    }
+  ]
+}

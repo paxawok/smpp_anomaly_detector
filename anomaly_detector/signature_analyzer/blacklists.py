@@ -109,7 +109,49 @@ def is_blacklisted(text: str) -> bool:
     """
     return phishing_detector.is_blacklisted(text)
 
-
+class BlacklistsAnalyzer:
+    """
+    Клас для аналізу чорних списків відправників та шаблонів повідомлень
+    """
+    def __init__(self):
+        self.phishing_detector = PhishingDetector()
+        
+    def check_sender(self, sender: str) -> dict:
+        """
+        Перевіряє відправника на присутність у чорному списку
+        
+        Returns:
+            dict: Результат перевірки у форматі 
+                  {"is_blacklisted": bool, "risk_score": float, "category": str}
+        """
+        # Тут можна додати більш складну логіку перевірки відправника
+        # Наразі повертаємо заглушку
+        return {
+            "is_blacklisted": False,
+            "risk_score": 0.0,
+            "category": ""
+        }
+    
+    def check_message_content(self, message: str) -> dict:
+        """
+        Перевіряє вміст повідомлення на наявність шаблонів фішингу
+        
+        Returns:
+            dict: Результат перевірки у форматі 
+                  {"is_suspicious": bool, "risk_score": float, "categories": list}
+        """
+        # Використовуємо PhishingDetector для перевірки
+        is_suspicious = self.phishing_detector.is_blacklisted(message)
+        details = []
+        
+        if is_suspicious:
+            details = self.phishing_detector.check_with_details(message)
+        
+        return {
+            "is_suspicious": is_suspicious,
+            "risk_score": 0.8 if is_suspicious else 0.0,
+            "categories": details
+        }
 # Приклад використання
 if __name__ == "__main__":
     # Тестові повідомлення

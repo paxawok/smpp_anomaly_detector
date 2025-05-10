@@ -8,7 +8,7 @@ import sys
 import argparse
 import json
 
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 from smpp_proxy.tls_config import TLSConfig, create_default_config
 from smpp_proxy.secure_mode import SecureTransport, SecureSMPPProxy
 from smpp_proxy.pdu_parser import PDUParser
@@ -140,6 +140,9 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
                 destination_addr = parsed_pdu.get("destination_addr", "")
                 short_message = parsed_pdu.get("short_message", "")
                 
+                # Логуємо отримання повідомлення
+                logger.info(f"Отримано повідомлення: від {source_addr} до {destination_addr}: {short_message[:30]}...")
+                
                 # Аналізуємо повідомлення
                 result = await decision_engine.analyze(
                     message=short_message,
@@ -149,11 +152,24 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
                 
                 # Обробляємо результат
                 decision = result.get("decision", "allow")
+                risk_score = result.get("risk_score", 0)
+                tags = result.get("tags", [])
                 
                 if decision == "block":
+                    # Логуємо блокування
                     logger.warning(
                         f"Заблоковано повідомлення від {source_addr} до {destination_addr}: "
-                        f"risk_score={result.get('risk_score', 0)}, tags={result.get('tags', [])}"
+                        f"risk_score={risk_score}, tags={tags}"
+                    )
+                    
+                    # Явно викликаємо метод anomaly з правильними аргументами
+                    logger.anomaly(
+                        f"Заблоковано повідомлення",
+                        source_addr,
+                        destination_addr,
+                        risk_score,
+                        "blocked",
+                        tags
                     )
                     
                     # Відправляємо помилку замість оригінального PDU
@@ -168,18 +184,103 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
                     return error_resp
                     
                 elif decision == "suspicious":
+                    # Логуємо підозріле повідомлення
                     logger.warning(
                         f"Підозріле повідомлення від {source_addr} до {destination_addr}: "
-                        f"risk_score={result.get('risk_score', 0)}, tags={result.get('tags', [])}"
+                        f"risk_score={risk_score}, tags={tags}"
                     )
-                    # Пропускаємо, але логуємо
                     
+                    # Явно викликаємо метод anomaly
+                    logger.anomaly(
+                        f"Підозріле повідомлення",
+                        source_addr,
+                        destination_addr,
+                        risk_score,
+                        "suspicious",
+                        tags
+                    )
+                    
+                    # Для підозрілих повідомлень все одно надсилаємо відповідь про успіх
+                    sequence_number = parsed_pdu.get("sequence_number", 0)
+                    message_id = b"test_message_id"
+                    
+                    resp_header = struct.pack('!IIII',
+                        16 + 1 + len(message_id),  # command_length
+                        0x80000004,                # command_id (submit_sm_resp)
+                        0x00000000,                # command_status (OK)
+                        sequence_number            # sequence_number
+                    )
+                    
+                    resp_body = message_id + b'\x00'
+                    
+                    return resp_header + resp_body
+                else:
+                    # Логуємо дозволене повідомлення
+                    logger.info(
+                        f"Дозволено повідомлення від {source_addr} до {destination_addr}"
+                    )
+                    
+                    # Явно викликаємо метод anomaly для дозволених повідомлень
+                    logger.anomaly(
+                        f"Дозволено повідомлення",
+                        source_addr,
+                        destination_addr,
+                        risk_score,
+                        "allowed",
+                        tags
+                    )
+                    
+                    # Для звичайних повідомлень надсилаємо відповідь про успіх
+                    sequence_number = parsed_pdu.get("sequence_number", 0)
+                    message_id = b"test_message_id"
+                    
+                    resp_header = struct.pack('!IIII',
+                        16 + 1 + len(message_id),  # command_length
+                        0x80000004,                # command_id (submit_sm_resp)
+                        0x00000000,                # command_status (OK)
+                        sequence_number            # sequence_number
+                    )
+                    
+                    resp_body = message_id + b'\x00'
+                    
+                    return resp_header + resp_body
+                
+            # Обробка bind команд
+            elif parsed_pdu.get("command_name") in ["bind_transmitter", "bind_receiver", "bind_transceiver"]:
+                sequence_number = parsed_pdu.get("sequence_number", 0)
+                command_id = parsed_pdu.get("command_id", 0)
+                
+                logger.info(f"Отримано команду {parsed_pdu.get('command_name')}, відправляємо відповідь")
+                
+                # Створюємо відповідь на bind
+                resp_header = struct.pack('!IIII',
+                    16,                       # command_length
+                    command_id | 0x80000000,  # command_id (resp)
+                    0x00000000,               # command_status (OK)
+                    sequence_number           # sequence_number
+                )
+                
+                return resp_header
+            
+            # Обробка unbind команди
+            elif parsed_pdu.get("command_name") == "unbind":
+                sequence_number = parsed_pdu.get("sequence_number", 0)
+                
+                # Створюємо відповідь на unbind
+                resp_header = struct.pack('!IIII',
+                    16,                # command_length
+                    0x80000006,        # command_id (unbind_resp)
+                    0x00000000,        # command_status (OK)
+                    sequence_number    # sequence_number
+                )
+                
+                return resp_header
+                
         except Exception as e:
             logger.error(f"Помилка в обробнику аномалій: {e}")
     
     # За замовчуванням пропускаємо PDU без змін
     return pdu_data
-
 
 async def main():
     """
@@ -197,6 +298,7 @@ async def main():
     parser.add_argument("--use-tls", action="store_true", help="Використовувати TLS")
     parser.add_argument("--cert-path", help="Шлях до сертифіката")
     parser.add_argument("--key-path", help="Шлях до приватного ключа")
+    parser.add_argument("--no-tls", action="store_true", help="Не використовувати TLS (тестовий режим)")
     
     args = parser.parse_args()
     
@@ -213,7 +315,8 @@ async def main():
         
         # Налаштовуємо TLS, якщо потрібно
         tls_config = None
-        if args.use_tls:
+        
+        if not args.no_tls and args.use_tls:
             tls_config = TLSConfig(
                 cert_path=args.cert_path,
                 key_path=args.key_path
@@ -226,7 +329,7 @@ async def main():
             remote_host=args.remote_host,
             remote_port=args.remote_port,
             tls_config=tls_config,
-            client_requires_tls=args.use_tls,
+            client_requires_tls=args.use_tls and not args.no_tls,
             server_requires_tls=False
         )
         
@@ -235,7 +338,7 @@ async def main():
         
         logger.info(
             f"Запуск SMPP проксі-сервера на {args.host}:{args.port} -> {args.remote_host}:{args.remote_port}, "
-            f"TLS: {args.use_tls}"
+            f"TLS: {args.use_tls and not args.no_tls}"
         )
         
         # Запускаємо проксі-сервер
@@ -248,7 +351,6 @@ async def main():
     finally:
         # Закриваємо з'єднання з Redis
         await redis_client.disconnect()
-
 
 if __name__ == "__main__":
     # Глобальні змінні для обробника

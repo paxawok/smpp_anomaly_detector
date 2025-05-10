@@ -55,7 +55,60 @@ def is_restricted_prefix(phone_number: str) -> bool:
             return True
             
     return False
-
+class GeoChecker:
+    """
+    Клас для перевірки географічних обмежень телекомунікаційних параметрів.
+    """
+    def __init__(self):
+        # Список заблокованих префіксів
+        self.restricted_prefixes = ["+7978", "+7949"]
+    
+    def check_phone(self, phone_number: str) -> dict:
+        """
+        Перевіряє номер телефону на приналежність до заблокованих регіонів
+        
+        Args:
+            phone_number: Номер телефону для перевірки
+            
+        Returns:
+            dict: Результат перевірки
+        """
+        # Нормалізуємо номер телефону
+        normalized_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+        
+        # Перевіряємо префікси
+        for prefix in self.restricted_prefixes:
+            if normalized_number.startswith(prefix):
+                return {
+                    "is_blocked": True,
+                    "risk_score": 1.0,
+                    "category": "restricted_region",
+                    "region": "occupied_territory"
+                }
+        
+        # Додаткові перевірки MCC/MNC можна додати тут
+        
+        # Якщо номер не заблоковано
+        return {
+            "is_blocked": False,
+            "risk_score": 0.0,
+            "category": "",
+            "region": ""
+        }
+    
+    def check_mcc_mnc(self, mcc: str, mnc: str) -> bool:
+        """
+        Перевіряє, чи входить пара MCC/MNC до списку заблокованих.
+        Делегує виклик до глобальної функції is_restricted_mcc_mnc.
+        
+        Args:
+            mcc: Код країни мобільного зв'язку (3 цифри)
+            mnc: Код мобільної мережі (2-3 цифри)
+            
+        Returns:
+            bool: True, якщо пара MCC/MNC заблокована, інакше False
+        """
+        return is_restricted_mcc_mnc(mcc, mnc)
 
 # Приклад використання
 if __name__ == "__main__":

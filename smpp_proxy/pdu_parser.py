@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, Union, Tuple
 import struct
 import binascii
 import re
-from logging.logger import SMPPLogger
+from logger.logger import SMPPLogger
 
 logger = SMPPLogger("pdu_parser")
 

@@ -1,0 +1,24 @@
+{
+  "phishing": [
+    "secure-bank-login.com",
+    "verify-card-info.net",
+    "account-security-check.com",
+    "login-verification-service.com",
+    "monobank-verify.net",
+    "privatbank-login.com",
+    "privat24-secure.net",
+    "bank-verify-id.com"
+  ],
+  "malware": [
+    "download-free-antivirus.net",
+    "system-cleaner-pro.com",
+    "fast-browser-update.com",
+    "security-protect-update.net"
+  ],
+  "spam": [
+    "free-prizes-now.com",
+    "win-lottery-online.net",
+    "best-casino-bonus.com",
+    "dating-hot-girls.com"
+  ]
+}

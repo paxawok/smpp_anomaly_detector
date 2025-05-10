@@ -71,7 +71,7 @@ class SMPPLogger:
         logger.critical(message)
         
     def anomaly(self, message: str, source: str, dest: str, risk_score: float, 
-                decision: str, tags: list, extra: Optional[Dict[str, Any]] = None) -> None:
+            decision: str, tags: list, extra: Optional[Dict[str, Any]] = None) -> None:
         """
         Спеціальний метод для логування виявлених аномалій
         """
