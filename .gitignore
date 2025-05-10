@@ -1,7 +1,43 @@
+# Віртуальне середовище
+.venv/
+venv/
+env/
+ENV/
+
+# Python кеш
 __pycache__/
-.env
-*.log
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Дистрибутиви
+dist/
+build/
+*.egg-info/
+
+# Логи
 logs/
-.cache/
-.poetry/
+*.log
+
+# Тестування
+.coverage
+htmlcov/
+.pytest_cache/
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Файли Redis
+*.rdb
+dump.rdb
+
+# Файли середовища
+.env
+
+# Специфічне для проєкту
+ml_models/*.pkl

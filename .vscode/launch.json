@@ -1,0 +1,39 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "SMPP Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "smpp_proxy.server",
+            "justMyCode": true,
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "CLI Interface",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "cli.terminal_ui",
+            "justMyCode": true,
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Traffic Simulator",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "cli.simulator",
+            "justMyCode": true,
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Run Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/"
+            ],
+            "justMyCode": true
+        }
+    ]
+}

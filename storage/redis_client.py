@@ -16,8 +16,8 @@ class RedisClient:
         self.port = port or int(os.environ.get("REDIS_PORT", 6379))
         self.db = db
         self.redis = None
-        self.url = f"redis://{self.host}:{self.port}/{self.db}"
-        default_logger.info(f"redis клієнт: {self.url}")
+        self.url = f"Redis://{self.host}:{self.port}/{self.db}"
+        default_logger.info(f"Redis клієнт: {self.url}")
     
     async def connect(self) -> None:
         if self.redis is None:
@@ -27,16 +27,16 @@ class RedisClient:
                     encoding="utf-8",
                     decode_responses=True
                 )
-                default_logger.info(f"підключено до redis: {self.url}")
+                default_logger.info(f"Підключено до Redis: {self.url}")
             except Exception as e:
-                default_logger.error(f"помилка підключення до redis: {e}")
+                default_logger.error(f"Помилка підключення до Redis: {e}")
                 raise
     
     async def disconnect(self) -> None:
         if self.redis is not None:
             await self.redis.close()
             self.redis = None
-            default_logger.info("відключено від redis")
+            default_logger.info("Відключено від Redis")
     
     async def _ensure_connection(self) -> None:
         if self.redis is None:
