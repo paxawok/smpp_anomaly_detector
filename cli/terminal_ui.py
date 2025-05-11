@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 import asyncio
 import argparse
 import os
@@ -15,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Імпортуємо компоненти системи
 from logger.logger import SMPPLogger
-from storage.redis_client import RedisClient
+from storage.sqlite_client import SQLiteClient
 
 # Налаштування для colorama для Windows
 try:
@@ -34,13 +33,13 @@ logger = SMPPLogger("terminal_ui")
 
 class TerminalMonitor:
     """
-    Клас для моніторингу та відображення роботи SMPP системи в консолі
+    Клас для моніторингу та відображення роботи SMPP системи в консолі з використанням Redis
     """
     def __init__(self, logs_dir: str = "logs", refresh_interval: float = 1.0):
         self.logs_dir = logs_dir
         self.refresh_interval = refresh_interval
         self.running = False
-        self.redis = RedisClient()
+        self.redis = SQLiteClient()
         self.log_file = os.path.join(logs_dir, "smpp_log.jsonl")
         
         # Останній прочитаний рядок логу
@@ -69,12 +68,14 @@ class TerminalMonitor:
         Підключається до Redis
         """
         await self.redis.connect()
+        logger.info("Підключено до Redis")
     
     async def disconnect(self) -> None:
         """
         Відключається від Redis
         """
         await self.redis.disconnect()
+        logger.info("Відключено від Redis")
     
     def read_new_logs(self) -> List[Dict[str, Any]]:
         """
@@ -102,10 +103,6 @@ class TerminalMonitor:
                 # Оновлюємо позицію
                 self.last_log_position = f.tell()
                 
-            return new_logs
-            
-        except Exception as e:
-            logger.error(f"Помилка читання логів: {e}")
             return new_logs
             
         except Exception as e:
@@ -155,17 +152,33 @@ class TerminalMonitor:
         """
         Отримує статистику з Redis
         """
-        result = {}
+        redis_stats = {}
         
         try:
-            # Отримуємо інформацію про rate-limiting
+            # Отримуємо основну статистику з Redis
+            redis_status = await self.redis.get_stats()
+            redis_stats["status"] = redis_status.get("status", "unknown")
+            
+            # Отримуємо останні аномалії з Redis
             # Тут можна додати інші запити до Redis для отримання додаткової статистики
             
-            return result
+            return redis_stats
             
         except Exception as e:
             logger.error(f"Помилка отримання статистики з Redis: {e}")
-            return result
+            return {"status": "error", "error": str(e)}
+    
+    async def get_anomalies_from_redis(self, count: int = 10) -> List[Dict[str, Any]]:
+        """
+        Отримує останні аномалії з Redis
+        """
+        try:
+            # У реальній реалізації ми б використовували zrange для отримання останніх аномалій
+            # Але в тестовому режимі просто повертаємо пусту лист
+            return []
+        except Exception as e:
+            logger.error(f"Помилка отримання аномалій з Redis: {e}")
+            return []
     
     def render_text_dashboard(self) -> str:
         """
@@ -191,8 +204,13 @@ class TerminalMonitor:
   • Дозволено: {Fore.GREEN}{self.stats["allowed_messages"]}{Style.RESET_ALL}
 """
         
+        # Статус Redis
+        redis_status = self.redis.redis is not None
+        dashboard += f"\n{Fore.YELLOW}Статус Redis:{Style.RESET_ALL} "
+        dashboard += f"{Fore.GREEN}Підключено{Style.RESET_ALL}" if redis_status else f"{Fore.RED}Відключено{Style.RESET_ALL}"
+        
         # Top 5 джерел
-        dashboard += f"\n{Fore.YELLOW}Топ 5 джерел:{Style.RESET_ALL}\n"
+        dashboard += f"\n\n{Fore.YELLOW}Топ 5 джерел:{Style.RESET_ALL}\n"
         top_sources = sorted(self.stats["top_sources"].items(), key=lambda x: x[1], reverse=True)[:5]
         for i, (source, count) in enumerate(top_sources, 1):
             dashboard += f"  {i}. {source}: {count}\n"
@@ -259,8 +277,11 @@ class TerminalMonitor:
                 # Читаємо нові логи
                 new_logs = self.read_new_logs()
                 
-                # Оновлюємо статистику
+                # Оновлюємо статистику з файлових логів
                 self.update_stats(new_logs)
+                
+                # Отримуємо статистику з Redis
+                redis_stats = await self.get_redis_stats()
                 
                 # Відображаємо дашборд
                 os.system('cls' if os.name == 'nt' else 'clear')
@@ -322,14 +343,17 @@ class TerminalMonitor:
                 # Читаємо нові логи
                 new_logs = self.read_new_logs()
                 
-                # Оновлюємо статистику
+                # Оновлюємо статистику з файлових логів
                 self.update_stats(new_logs)
+                
+                # Отримуємо статистику з Redis
+                redis_stats = await self.get_redis_stats()
                 
                 # Очищаємо екран
                 stdscr.clear()
                 
                 # Рендеримо дашборд
-                self._render_curses_dashboard(stdscr, height, width)
+                self._render_curses_dashboard(stdscr, height, width, redis_stats)
                 
                 # Оновлюємо екран
                 stdscr.refresh()
@@ -347,7 +371,7 @@ class TerminalMonitor:
             self.running = False
             logger.error(f"Помилка в curses режимі: {e}")
     
-    def _render_curses_dashboard(self, stdscr, height: int, width: int) -> None:
+    def _render_curses_dashboard(self, stdscr, height: int, width: int, redis_stats: Dict[str, Any] = None) -> None:
         """
         Рендерить дашборд з використанням curses
         """
@@ -415,6 +439,23 @@ class TerminalMonitor:
         # Порожній рядок
         current_row += 1
         
+        # Статус Redis
+        if current_row < height:
+            redis_status = self.redis.redis is not None
+            stdscr.addstr(current_row, 4, "• Статус Redis: ")
+            if redis_status:
+                stdscr.attron(curses.color_pair(1))
+                stdscr.addstr("Підключено")
+                stdscr.attroff(curses.color_pair(1))
+            else:
+                stdscr.attron(curses.color_pair(3))
+                stdscr.addstr("Відключено")
+                stdscr.attroff(curses.color_pair(3))
+            current_row += 1
+        
+        # Порожній рядок
+        current_row += 1
+        
         # Розбиваємо екран на колонки
         col_width = width // 3
         
@@ -448,7 +489,7 @@ class TerminalMonitor:
                     current_row += 1
         
         # Скидаємо позицію рядка для наступної колонки
-        current_row = 6  # Після заголовка та статистики
+        current_row = 8  # Після заголовка та статистики
         
         # Топ 5 тегів (друга колонка)
         if current_row < height:
@@ -548,8 +589,16 @@ async def main():
     parser.add_argument("--logs-dir", default="logs", help="Директорія з логами")
     parser.add_argument("--refresh", type=float, default=1.0, help="Інтервал оновлення (в секундах)")
     parser.add_argument("--text-mode", action="store_true", help="Використовувати текстовий режим замість curses")
+    parser.add_argument("--redis-host", default=None, help="Хост Redis серверу")
+    parser.add_argument("--redis-port", type=int, default=None, help="Порт Redis серверу")
     
     args = parser.parse_args()
+    
+    # Встановлюємо змінні оточення для Redis, якщо вказані
+    if args.redis_host:
+        os.environ["REDIS_HOST"] = args.redis_host
+    if args.redis_port:
+        os.environ["REDIS_PORT"] = str(args.redis_port)
     
     # Створюємо монітор
     monitor = TerminalMonitor(

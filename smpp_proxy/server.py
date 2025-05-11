@@ -15,7 +15,9 @@ from smpp_proxy.pdu_parser import PDUParser
 
 # Імпортуємо компоненти детектора аномалій
 from anomaly_detector.decision_engine.core import DecisionEngine
-from storage.redis_client import RedisClient
+from storage.sqlite_client import SQLiteClient
+from anomaly_detector.behavioral_analyzer.rate_limiter import rate_limiter, init_rate_limiter
+from anomaly_detector.signature_analyzer.blacklists import blacklists_analyzer, init_blacklists_analyzer
 
 logger = SMPPLogger("smpp_server")
 
@@ -125,7 +127,7 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
     """
     Обробник для аналізу PDU на предмет аномалій
     """
-    global decision_engine, pdu_parser
+    global decision_engine, pdu_parser, redis_client
     
     # Обробляємо лише пакети від клієнта до сервера і лише submit_sm
     if direction == "client_to_server":
@@ -154,6 +156,20 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
                 decision = result.get("decision", "allow")
                 risk_score = result.get("risk_score", 0)
                 tags = result.get("tags", [])
+                
+                # Зберігаємо результат в Redis для подальшого аналізу
+                try:
+                    anomaly_data = {
+                        "source": source_addr,
+                        "dest": destination_addr,
+                        "message": short_message,
+                        "risk_score": risk_score,
+                        "decision": decision,
+                        "tags": tags
+                    }
+                    await redis_client.record_anomaly(anomaly_data)
+                except Exception as e:
+                    logger.error(f"Помилка запису аномалії в Redis: {e}")
                 
                 if decision == "block":
                     # Логуємо блокування
@@ -282,11 +298,33 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
     # За замовчуванням пропускаємо PDU без змін
     return pdu_data
 
+async def init_components():
+    """
+    Ініціалізує основні компоненти системи
+    """
+    global redis_client, decision_engine, pdu_parser
+    
+    # Ініціалізуємо Redis клієнт
+    redis_client = SQLiteClient()
+    await redis_client.connect()
+    
+    # Ініціалізуємо підсистеми, які використовують Redis
+    await init_rate_limiter()
+    await init_blacklists_analyzer()
+    
+    # Ініціалізуємо парсер PDU
+    pdu_parser = PDUParser()
+    
+    # Ініціалізуємо двигун прийняття рішень
+    decision_engine = DecisionEngine()
+    
+    logger.info("Всі компоненти системи успішно ініціалізовано")
+
 async def main():
     """
     Головна функція для запуску SMPP проксі з виявленням аномалій
     """
-    global decision_engine, pdu_parser
+    global decision_engine, pdu_parser, redis_client
     
     parser = argparse.ArgumentParser(description="SMPP Anomaly Detector Server")
     
@@ -300,18 +338,21 @@ async def main():
     parser.add_argument("--key-path", help="Шлях до приватного ключа")
     parser.add_argument("--no-tls", action="store_true", help="Не використовувати TLS (тестовий режим)")
     
+    # Додаткові параметри для Redis
+    parser.add_argument("--redis-host", default=None, help="Хост Redis серверу")
+    parser.add_argument("--redis-port", type=int, default=None, help="Порт Redis серверу")
+    
     args = parser.parse_args()
     
     try:
-        # Ініціалізуємо парсер PDU
-        pdu_parser = PDUParser()
+        # Встановлюємо змінні оточення для Redis, якщо вказані
+        if args.redis_host:
+            os.environ["REDIS_HOST"] = args.redis_host
+        if args.redis_port:
+            os.environ["REDIS_PORT"] = str(args.redis_port)
         
-        # Ініціалізуємо Redis клієнт
-        redis_client = RedisClient()
-        await redis_client.connect()
-        
-        # Ініціалізуємо двигун прийняття рішень
-        decision_engine = DecisionEngine()
+        # Ініціалізуємо компоненти системи
+        await init_components()
         
         # Налаштовуємо TLS, якщо потрібно
         tls_config = None
@@ -338,7 +379,7 @@ async def main():
         
         logger.info(
             f"Запуск SMPP проксі-сервера на {args.host}:{args.port} -> {args.remote_host}:{args.remote_port}, "
-            f"TLS: {args.use_tls and not args.no_tls}"
+            f"TLS: {args.use_tls and not args.no_tls}, Redis: {os.environ.get('REDIS_HOST', 'localhost')}:{os.environ.get('REDIS_PORT', '6379')}"
         )
         
         # Запускаємо проксі-сервер
@@ -350,11 +391,13 @@ async def main():
         logger.error(f"Помилка запуску сервера: {e}")
     finally:
         # Закриваємо з'єднання з Redis
-        await redis_client.disconnect()
+        if redis_client:
+            await redis_client.disconnect()
 
 if __name__ == "__main__":
     # Глобальні змінні для обробника
     decision_engine = None
     pdu_parser = None
+    redis_client = None
     
     asyncio.run(main())

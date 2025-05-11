@@ -1,16 +1,21 @@
 import time
-import threading
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Any
+
+from logger.logger import SMPPLogger
+from storage.sqlite_client import SQLiteClient
+
+logger = SMPPLogger("rate_limiter")
 
 class RateLimiter:
     """
     Клас для обмеження кількості SMS-повідомлень, надісланих на один номер телефону за день.
+    Використовує Redis для зберігання лічильників.
     
     Attributes:
         daily_limit (int): Максимальна кількість повідомлень на день.
-        counters (Dict[str, Tuple[int, float]]): Словник лічильників для кожного номера.
-                 Формат: {номер: (кількість, timestamp останнього оновлення)}
+        redis_client (RedisClient): Клієнт для роботи з Redis.
         cleanup_interval (int): Інтервал очищення застарілих лічильників (в секундах).
     """
     
@@ -23,30 +28,35 @@ class RateLimiter:
             cleanup_interval: Інтервал очищення лічильників (в секундах).
         """
         self.daily_limit = daily_limit
-        self.counters: Dict[str, Tuple[int, float]] = {}
         self.cleanup_interval = cleanup_interval
-        self.lock = threading.RLock()
+        self.redis_client = SQLiteClient()
         
+        # Лічильник для роботи в випадку, коли Redis недоступний
+        self.counters: Dict[str, Tuple[int, float]] = {}
+        self.lock = asyncio.Lock()
+        
+        logger.info(f"RateLimiter ініціалізовано з лімітом {daily_limit} повідомлень на день")
+    
+    async def init(self) -> None:
+        """Ініціалізує підключення до Redis"""
+        await self.redis_client.connect()
         # Запускаємо фоновий потік для очищення застарілих лічильників
-        self._start_cleanup_thread()
+        asyncio.create_task(self._cleanup_task())
     
-    def _start_cleanup_thread(self) -> None:
-        """Запускає фоновий потік для очищення застарілих лічильників."""
-        
-        def cleanup_task():
-            while True:
-                time.sleep(self.cleanup_interval)
-                self._cleanup_expired_counters()
-        
-        cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)
-        cleanup_thread.start()
+    async def _cleanup_task(self) -> None:
+        """Фоновий потік для очищення застарілих лічильників"""
+        while True:
+            await asyncio.sleep(self.cleanup_interval)
+            await self._cleanup_expired_counters()
     
-    def _cleanup_expired_counters(self) -> None:
+    async def _cleanup_expired_counters(self) -> None:
         """Очищає застарілі лічильники (старші за 24 години)."""
+        # В Redis це не потрібно, оскільки ми встановлюємо TTL при створенні ключів
+        # Але підтримуємо для локального режиму
         current_time = time.time()
         day_seconds = 24 * 60 * 60  # 24 години в секундах
         
-        with self.lock:
+        async with self.lock:
             # Створюємо список номерів для видалення
             to_remove = []
             
@@ -59,7 +69,7 @@ class RateLimiter:
             for number in to_remove:
                 del self.counters[number]
     
-    def increment(self, destination_number: str) -> int:
+    async def increment(self, destination_number: str) -> int:
         """
         Збільшує лічильник для вказаного номера.
         
@@ -69,29 +79,44 @@ class RateLimiter:
         Returns:
             int: Нове значення лічильника.
         """
-        with self.lock:
-            current_time = time.time()
+        try:
+            # Спочатку спробуємо використати Redis
+            key = f"rate_limit:{destination_number}"
+            count = await self.redis_client.incr(key)
             
-            if destination_number in self.counters:
-                count, last_update = self.counters[destination_number]
-                
-                # Перевіряємо, чи не застарів лічильник (більше 24 годин)
-                if current_time - last_update > 24 * 60 * 60:
-                    # Якщо застарів, скидаємо його
-                    count = 1
-                else:
-                    # Інакше збільшуємо
-                    count += 1
-            else:
-                # Ініціалізуємо новий лічильник
-                count = 1
-            
-            # Оновлюємо лічильник і час останнього оновлення
-            self.counters[destination_number] = (count, current_time)
+            # При першому інкременті встановлюємо TTL на 24 години
+            if count == 1:
+                await self.redis_client.expire(key, 24 * 60 * 60)
             
             return count
+            
+        except Exception as e:
+            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            
+            # Fallback на локальний лічильник
+            async with self.lock:
+                current_time = time.time()
+                
+                if destination_number in self.counters:
+                    count, last_update = self.counters[destination_number]
+                    
+                    # Перевіряємо, чи не застарів лічильник (більше 24 годин)
+                    if current_time - last_update > 24 * 60 * 60:
+                        # Якщо застарів, скидаємо його
+                        count = 1
+                    else:
+                        # Інакше збільшуємо
+                        count += 1
+                else:
+                    # Ініціалізуємо новий лічильник
+                    count = 1
+                
+                # Оновлюємо лічильник і час останнього оновлення
+                self.counters[destination_number] = (count, current_time)
+                
+                return count
     
-    def is_allowed(self, destination_number: str) -> bool:
+    async def is_allowed(self, destination_number: str) -> bool:
         """
         Перевіряє, чи дозволено надсилати SMS на вказаний номер.
         
@@ -101,22 +126,37 @@ class RateLimiter:
         Returns:
             bool: True, якщо надсилання дозволено, False - якщо ліміт вичерпано.
         """
-        with self.lock:
-            # Якщо номер відсутній в лічильниках, значить дозволено
-            if destination_number not in self.counters:
-                return True
+        try:
+            # Спочатку спробуємо використати Redis
+            key = f"rate_limit:{destination_number}"
+            count_str = await self.redis_client.get(key)
             
-            count, last_update = self.counters[destination_number]
-            current_time = time.time()
+            if count_str:
+                count = int(count_str)
+                return count < self.daily_limit
             
-            # Якщо лічильник застарів (більше 24 годин), дозволяємо
-            if current_time - last_update > 24 * 60 * 60:
-                return True
+            return True  # Якщо ключа немає, значить лічильник не використовувався
             
-            # Перевіряємо, чи не перевищено ліміт
-            return count < self.daily_limit
+        except Exception as e:
+            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            
+            # Fallback на локальний лічильник
+            async with self.lock:
+                # Якщо номер відсутній в лічильниках, значить дозволено
+                if destination_number not in self.counters:
+                    return True
+                
+                count, last_update = self.counters[destination_number]
+                current_time = time.time()
+                
+                # Якщо лічильник застарів (більше 24 годин), дозволяємо
+                if current_time - last_update > 24 * 60 * 60:
+                    return True
+                
+                # Перевіряємо, чи не перевищено ліміт
+                return count < self.daily_limit
     
-    def get_count(self, destination_number: str) -> int:
+    async def get_count(self, destination_number: str) -> int:
         """
         Повертає поточне значення лічильника для вказаного номера.
         
@@ -126,18 +166,32 @@ class RateLimiter:
         Returns:
             int: Поточне значення лічильника або 0, якщо номер відсутній.
         """
-        with self.lock:
-            if destination_number in self.counters:
-                count, last_update = self.counters[destination_number]
-                current_time = time.time()
-                
-                # Якщо лічильник застарів, повертаємо 0
-                if current_time - last_update > 24 * 60 * 60:
-                    return 0
-                
-                return count
+        try:
+            # Спочатку спробуємо використати Redis
+            key = f"rate_limit:{destination_number}"
+            count_str = await self.redis_client.get(key)
             
-            return 0
+            if count_str:
+                return int(count_str)
+            
+            return 0  # Якщо ключа немає, значить лічильник не використовувався
+            
+        except Exception as e:
+            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            
+            # Fallback на локальний лічильник
+            async with self.lock:
+                if destination_number in self.counters:
+                    count, last_update = self.counters[destination_number]
+                    current_time = time.time()
+                    
+                    # Якщо лічильник застарів, повертаємо 0
+                    if current_time - last_update > 24 * 60 * 60:
+                        return 0
+                    
+                    return count
+                
+                return 0
     
     async def check_rate_limit(self, source_addr: str, destination_addr: str) -> Dict[str, Any]:
         """
@@ -151,12 +205,20 @@ class RateLimiter:
             Dict[str, Any]: Результат перевірки у форматі
                         {"exceeded": bool, "count": int, "limit": int, "risk_score": float}
         """
-        with self.lock:
-            # Перевіряємо лічильник для отримувача
-            count = self.get_count(destination_addr)
+        try:
+            # Створюємо комплексний ключ для джерела і призначення
+            key = f"rate_limit:{source_addr}:{destination_addr}"
             
-            # Збільшуємо лічильник
-            new_count = self.increment(destination_addr)
+            # Спочатку спробуємо використати Redis
+            return await self.redis_client.check_rate_limit(
+                source_addr, destination_addr, daily_limit=self.daily_limit
+            )
+        except Exception as e:
+            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            
+            # Використовуємо локальний лічильник
+            count = await self.get_count(destination_addr)
+            new_count = await self.increment(destination_addr)
             
             # Визначаємо, чи перевищено ліміт
             exceeded = new_count > self.daily_limit
@@ -171,50 +233,74 @@ class RateLimiter:
                 "risk_score": risk_score
             }
     
-    def reset(self, destination_number: str = None) -> None:
+    async def reset(self, destination_number: str = None) -> None:
         """
         Скидає лічильник для вказаного номера або всі лічильники.
         
         Args:
             destination_number: Номер телефону одержувача. Якщо None, скидаються всі лічильники.
         """
-        with self.lock:
+        try:
+            # Спочатку спробуємо використати Redis
             if destination_number:
-                if destination_number in self.counters:
-                    del self.counters[destination_number]
+                key = f"rate_limit:{destination_number}"
+                await self.redis_client.delete(key)
             else:
-                self.counters.clear()
+                # Небезпечно видаляти всі ключі, тому цю операцію не реалізуємо
+                # для Redis у виробничому середовищі
+                pass
+                
+        except Exception as e:
+            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            
+            # Fallback на локальний лічильник
+            async with self.lock:
+                if destination_number:
+                    if destination_number in self.counters:
+                        del self.counters[destination_number]
+                else:
+                    self.counters.clear()
 
 
 # Створюємо глобальний екземпляр для використання в різних модулях
 rate_limiter = RateLimiter()
 
+# Функція для ініціалізації глобального екземпляра
+async def init_rate_limiter() -> None:
+    await rate_limiter.init()
+
 
 # Приклад використання
 if __name__ == "__main__":
-    # Приклад використання класу
-    limiter = RateLimiter(daily_limit=5)  # Для тестування зменшуємо ліміт до 5
-    
-    # Симулюємо надсилання SMS
-    test_number = "+380671234567"
-    
-    for i in range(7):
-        if limiter.is_allowed(test_number):
-            print(f"SMS #{i+1} дозволено відправити на {test_number}")
-            count = limiter.increment(test_number)
-            print(f"Лічильник для {test_number}: {count}")
+    async def test_rate_limiter():
+        # Ініціалізуємо RateLimiter
+        limiter = RateLimiter(daily_limit=5)  # Для тестування зменшуємо ліміт до 5
+        await limiter.init()
+        
+        # Симулюємо надсилання SMS
+        test_number = "+380671234567"
+        
+        for i in range(7):
+            allowed = await limiter.is_allowed(test_number)
+            if allowed:
+                print(f"SMS #{i+1} дозволено відправити на {test_number}")
+                count = await limiter.increment(test_number)
+                print(f"Лічильник для {test_number}: {count}")
+            else:
+                print(f"SMS #{i+1} заблоковано для {test_number} (ліміт вичерпано)")
+        
+        print("\nЗагальний стан лічильників:")
+        print(f"Redis count: {await limiter.get_count(test_number)}")
+        
+        print("\nСкидаємо лічильник для тестового номера:")
+        await limiter.reset(test_number)
+        print(f"Лічильник після скидання: {await limiter.get_count(test_number)}")
+        
+        print("\nПеревіряємо дозвіл після скидання:")
+        if await limiter.is_allowed(test_number):
+            print(f"SMS дозволено відправити на {test_number}")
         else:
-            print(f"SMS #{i+1} заборонено відправити на {test_number} (ліміт вичерпано)")
+            print(f"SMS заблоковано для {test_number}")
     
-    print("\nЗагальний стан лічильників:")
-    print(limiter.counters)
-    
-    print("\nСкидаємо лічильник для тестового номера:")
-    limiter.reset(test_number)
-    print(f"Лічильник після скидання: {limiter.get_count(test_number)}")
-    
-    print("\nПеревіряємо дозвіл після скидання:")
-    if limiter.is_allowed(test_number):
-        print(f"SMS дозволено відправити на {test_number}")
-    else:
-        print(f"SMS заборонено відправити на {test_number}")
+    # Запускаємо тест
+    asyncio.run(test_rate_limiter())
