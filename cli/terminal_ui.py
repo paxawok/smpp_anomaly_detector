@@ -33,13 +33,13 @@ logger = SMPPLogger("terminal_ui")
 
 class TerminalMonitor:
     """
-    Клас для моніторингу та відображення роботи SMPP системи в консолі з використанням Redis
+    Клас для моніторингу та відображення роботи SMPP системи в консолі з використанням SQLite
     """
     def __init__(self, logs_dir: str = "logs", refresh_interval: float = 1.0):
         self.logs_dir = logs_dir
         self.refresh_interval = refresh_interval
         self.running = False
-        self.redis = SQLiteClient()
+        self.sqlite_client = SQLiteClient()
         self.log_file = os.path.join(logs_dir, "smpp_log.jsonl")
         
         # Останній прочитаний рядок логу
@@ -65,17 +65,17 @@ class TerminalMonitor:
     
     async def connect(self) -> None:
         """
-        Підключається до Redis
+        Підключається до SQLite
         """
-        await self.redis.connect()
-        logger.info("Підключено до Redis")
+        await self.sqlite_client.connect()
+        logger.info("Підключено до SQLite")
     
     async def disconnect(self) -> None:
         """
-        Відключається від Redis
+        Відключається від SQLite
         """
-        await self.redis.disconnect()
-        logger.info("Відключено від Redis")
+        await self.sqlite_client.disconnect()
+        logger.info("Відключено від SQLite")
     
     def read_new_logs(self) -> List[Dict[str, Any]]:
         """
@@ -148,36 +148,34 @@ class TerminalMonitor:
                 if len(self.recent_logs) > self.max_recent_logs:
                     self.recent_logs = self.recent_logs[-self.max_recent_logs:]
     
-    async def get_redis_stats(self) -> Dict[str, Any]:
+    async def get_sqlite_stats(self) -> Dict[str, Any]:
         """
-        Отримує статистику з Redis
+        Отримує статистику з SQLite
         """
-        redis_stats = {}
+        sqlite_stats = {}
         
         try:
-            # Отримуємо основну статистику з Redis
-            redis_status = await self.redis.get_stats()
-            redis_stats["status"] = redis_status.get("status", "unknown")
+            # Отримуємо основну статистику з SQLite
+            sqlite_status = await self.sqlite_client.get_stats()
+            sqlite_stats["status"] = sqlite_status.get("status", "unknown")
             
-            # Отримуємо останні аномалії з Redis
-            # Тут можна додати інші запити до Redis для отримання додаткової статистики
+            # Отримуємо останні аномалії з SQLite
+            # Тут можна додати інші запити до SQLite для отримання додаткової статистики
             
-            return redis_stats
+            return sqlite_stats
             
         except Exception as e:
-            logger.error(f"Помилка отримання статистики з Redis: {e}")
+            logger.error(f"Помилка отримання статистики з SQLite: {e}")
             return {"status": "error", "error": str(e)}
     
-    async def get_anomalies_from_redis(self, count: int = 10) -> List[Dict[str, Any]]:
+    async def get_anomalies_from_sqlite(self, count: int = 10) -> List[Dict[str, Any]]:
         """
-        Отримує останні аномалії з Redis
+        Отримує останні аномалії з SQLite
         """
         try:
-            # У реальній реалізації ми б використовували zrange для отримання останніх аномалій
-            # Але в тестовому режимі просто повертаємо пусту лист
-            return []
+            return await self.sqlite_client.get_recent_anomalies(count)
         except Exception as e:
-            logger.error(f"Помилка отримання аномалій з Redis: {e}")
+            logger.error(f"Помилка отримання аномалій з SQLite: {e}")
             return []
     
     def render_text_dashboard(self) -> str:
@@ -204,10 +202,10 @@ class TerminalMonitor:
   • Дозволено: {Fore.GREEN}{self.stats["allowed_messages"]}{Style.RESET_ALL}
 """
         
-        # Статус Redis
-        redis_status = self.redis.redis is not None
-        dashboard += f"\n{Fore.YELLOW}Статус Redis:{Style.RESET_ALL} "
-        dashboard += f"{Fore.GREEN}Підключено{Style.RESET_ALL}" if redis_status else f"{Fore.RED}Відключено{Style.RESET_ALL}"
+        # Статус SQLite
+        sqlite_status = self.sqlite_client.connection is not None
+        dashboard += f"\n{Fore.YELLOW}Статус SQLite:{Style.RESET_ALL} "
+        dashboard += f"{Fore.GREEN}Підключено{Style.RESET_ALL}" if sqlite_status else f"{Fore.RED}Відключено{Style.RESET_ALL}"
         
         # Top 5 джерел
         dashboard += f"\n\n{Fore.YELLOW}Топ 5 джерел:{Style.RESET_ALL}\n"
@@ -280,8 +278,8 @@ class TerminalMonitor:
                 # Оновлюємо статистику з файлових логів
                 self.update_stats(new_logs)
                 
-                # Отримуємо статистику з Redis
-                redis_stats = await self.get_redis_stats()
+                # Отримуємо статистику з SQLite
+                sqlite_stats = await self.get_sqlite_stats()
                 
                 # Відображаємо дашборд
                 os.system('cls' if os.name == 'nt' else 'clear')
@@ -346,14 +344,14 @@ class TerminalMonitor:
                 # Оновлюємо статистику з файлових логів
                 self.update_stats(new_logs)
                 
-                # Отримуємо статистику з Redis
-                redis_stats = await self.get_redis_stats()
+                # Отримуємо статистику з SQLite
+                sqlite_stats = await self.get_sqlite_stats()
                 
                 # Очищаємо екран
                 stdscr.clear()
                 
                 # Рендеримо дашборд
-                self._render_curses_dashboard(stdscr, height, width, redis_stats)
+                self._render_curses_dashboard(stdscr, height, width, sqlite_stats)
                 
                 # Оновлюємо екран
                 stdscr.refresh()
@@ -371,7 +369,7 @@ class TerminalMonitor:
             self.running = False
             logger.error(f"Помилка в curses режимі: {e}")
     
-    def _render_curses_dashboard(self, stdscr, height: int, width: int, redis_stats: Dict[str, Any] = None) -> None:
+    def _render_curses_dashboard(self, stdscr, height: int, width: int, sqlite_stats: Dict[str, Any] = None) -> None:
         """
         Рендерить дашборд з використанням curses
         """
@@ -439,11 +437,11 @@ class TerminalMonitor:
         # Порожній рядок
         current_row += 1
         
-        # Статус Redis
+        # Статус SQLite
         if current_row < height:
-            redis_status = self.redis.redis is not None
-            stdscr.addstr(current_row, 4, "• Статус Redis: ")
-            if redis_status:
+            sqlite_status = self.sqlite_client.connection is not None
+            stdscr.addstr(current_row, 4, "• Статус SQLite: ")
+            if sqlite_status:
                 stdscr.attron(curses.color_pair(1))
                 stdscr.addstr("Підключено")
                 stdscr.attroff(curses.color_pair(1))
@@ -589,16 +587,13 @@ async def main():
     parser.add_argument("--logs-dir", default="logs", help="Директорія з логами")
     parser.add_argument("--refresh", type=float, default=1.0, help="Інтервал оновлення (в секундах)")
     parser.add_argument("--text-mode", action="store_true", help="Використовувати текстовий режим замість curses")
-    parser.add_argument("--redis-host", default=None, help="Хост Redis серверу")
-    parser.add_argument("--redis-port", type=int, default=None, help="Порт Redis серверу")
+    parser.add_argument("--sqlite-db", default=None, help="Шлях до бази даних SQLite")
     
     args = parser.parse_args()
     
-    # Встановлюємо змінні оточення для Redis, якщо вказані
-    if args.redis_host:
-        os.environ["REDIS_HOST"] = args.redis_host
-    if args.redis_port:
-        os.environ["REDIS_PORT"] = str(args.redis_port)
+    # Встановлюємо змінні оточення для SQLite, якщо вказано
+    if args.sqlite_db:
+        os.environ["SQLITE_DB_PATH"] = args.sqlite_db
     
     # Створюємо монітор
     monitor = TerminalMonitor(
@@ -607,7 +602,7 @@ async def main():
     )
     
     try:
-        # Підключаємось до Redis
+        # Підключаємось до SQLite
         await monitor.connect()
         
         # Запускаємо відповідний режим

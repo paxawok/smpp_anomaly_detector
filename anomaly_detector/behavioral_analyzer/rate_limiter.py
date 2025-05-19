@@ -11,11 +11,11 @@ logger = SMPPLogger("rate_limiter")
 class RateLimiter:
     """
     Клас для обмеження кількості SMS-повідомлень, надісланих на один номер телефону за день.
-    Використовує Redis для зберігання лічильників.
+    Використовує SQLite для зберігання лічильників.
     
     Attributes:
         daily_limit (int): Максимальна кількість повідомлень на день.
-        redis_client (RedisClient): Клієнт для роботи з Redis.
+        sqlite_client (SQLiteClient): Клієнт для роботи з SQLite.
         cleanup_interval (int): Інтервал очищення застарілих лічильників (в секундах).
     """
     
@@ -29,17 +29,17 @@ class RateLimiter:
         """
         self.daily_limit = daily_limit
         self.cleanup_interval = cleanup_interval
-        self.redis_client = SQLiteClient()
+        self.sqlite_client = SQLiteClient()
         
-        # Лічильник для роботи в випадку, коли Redis недоступний
+        # Лічильник для роботи в випадку, коли SQLite недоступний
         self.counters: Dict[str, Tuple[int, float]] = {}
         self.lock = asyncio.Lock()
         
         logger.info(f"RateLimiter ініціалізовано з лімітом {daily_limit} повідомлень на день")
     
     async def init(self) -> None:
-        """Ініціалізує підключення до Redis"""
-        await self.redis_client.connect()
+        """Ініціалізує підключення до SQLite"""
+        await self.sqlite_client.connect()
         # Запускаємо фоновий потік для очищення застарілих лічильників
         asyncio.create_task(self._cleanup_task())
     
@@ -51,7 +51,7 @@ class RateLimiter:
     
     async def _cleanup_expired_counters(self) -> None:
         """Очищає застарілі лічильники (старші за 24 години)."""
-        # В Redis це не потрібно, оскільки ми встановлюємо TTL при створенні ключів
+        # В SQLite це не потрібно, оскільки ми встановлюємо TTL при створенні ключів
         # Але підтримуємо для локального режиму
         current_time = time.time()
         day_seconds = 24 * 60 * 60  # 24 години в секундах
@@ -80,18 +80,18 @@ class RateLimiter:
             int: Нове значення лічильника.
         """
         try:
-            # Спочатку спробуємо використати Redis
+            # Спочатку спробуємо використати SQLite
             key = f"rate_limit:{destination_number}"
-            count = await self.redis_client.incr(key)
+            count = await self.sqlite_client.incr(key)
             
             # При першому інкременті встановлюємо TTL на 24 години
             if count == 1:
-                await self.redis_client.expire(key, 24 * 60 * 60)
+                await self.sqlite_client.set(key, str(count), 24 * 60 * 60)
             
             return count
             
         except Exception as e:
-            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            logger.warning(f"Помилка при використанні SQLite, використовується локальний лічильник: {e}")
             
             # Fallback на локальний лічильник
             async with self.lock:
@@ -127,9 +127,9 @@ class RateLimiter:
             bool: True, якщо надсилання дозволено, False - якщо ліміт вичерпано.
         """
         try:
-            # Спочатку спробуємо використати Redis
+            # Спочатку спробуємо використати SQLite
             key = f"rate_limit:{destination_number}"
-            count_str = await self.redis_client.get(key)
+            count_str = await self.sqlite_client.get(key)
             
             if count_str:
                 count = int(count_str)
@@ -138,7 +138,7 @@ class RateLimiter:
             return True  # Якщо ключа немає, значить лічильник не використовувався
             
         except Exception as e:
-            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            logger.warning(f"Помилка при використанні SQLite, використовується локальний лічильник: {e}")
             
             # Fallback на локальний лічильник
             async with self.lock:
@@ -167,9 +167,9 @@ class RateLimiter:
             int: Поточне значення лічильника або 0, якщо номер відсутній.
         """
         try:
-            # Спочатку спробуємо використати Redis
+            # Спочатку спробуємо використати SQLite
             key = f"rate_limit:{destination_number}"
-            count_str = await self.redis_client.get(key)
+            count_str = await self.sqlite_client.get(key)
             
             if count_str:
                 return int(count_str)
@@ -177,7 +177,7 @@ class RateLimiter:
             return 0  # Якщо ключа немає, значить лічильник не використовувався
             
         except Exception as e:
-            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            logger.warning(f"Помилка при використанні SQLite, використовується локальний лічильник: {e}")
             
             # Fallback на локальний лічильник
             async with self.lock:
@@ -206,15 +206,12 @@ class RateLimiter:
                         {"exceeded": bool, "count": int, "limit": int, "risk_score": float}
         """
         try:
-            # Створюємо комплексний ключ для джерела і призначення
-            key = f"rate_limit:{source_addr}:{destination_addr}"
-            
-            # Спочатку спробуємо використати Redis
-            return await self.redis_client.check_rate_limit(
+            # Використовуємо SQLite для перевірки обмеження
+            return await self.sqlite_client.check_rate_limit(
                 source_addr, destination_addr, daily_limit=self.daily_limit
             )
         except Exception as e:
-            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            logger.warning(f"Помилка при використанні SQLite, використовується локальний лічильник: {e}")
             
             # Використовуємо локальний лічильник
             count = await self.get_count(destination_addr)
@@ -241,17 +238,17 @@ class RateLimiter:
             destination_number: Номер телефону одержувача. Якщо None, скидаються всі лічильники.
         """
         try:
-            # Спочатку спробуємо використати Redis
+            # Спочатку спробуємо використати SQLite
             if destination_number:
                 key = f"rate_limit:{destination_number}"
-                await self.redis_client.delete(key)
+                await self.sqlite_client.delete(key)
             else:
                 # Небезпечно видаляти всі ключі, тому цю операцію не реалізуємо
-                # для Redis у виробничому середовищі
+                # для SQLite у виробничому середовищі
                 pass
                 
         except Exception as e:
-            logger.warning(f"Помилка при використанні Redis, використовується локальний лічильник: {e}")
+            logger.warning(f"Помилка при використанні SQLite, використовується локальний лічильник: {e}")
             
             # Fallback на локальний лічильник
             async with self.lock:
@@ -290,7 +287,7 @@ if __name__ == "__main__":
                 print(f"SMS #{i+1} заблоковано для {test_number} (ліміт вичерпано)")
         
         print("\nЗагальний стан лічильників:")
-        print(f"Redis count: {await limiter.get_count(test_number)}")
+        print(f"SQLite count: {await limiter.get_count(test_number)}")
         
         print("\nСкидаємо лічильник для тестового номера:")
         await limiter.reset(test_number)

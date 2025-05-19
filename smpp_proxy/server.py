@@ -127,7 +127,7 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
     """
     Обробник для аналізу PDU на предмет аномалій
     """
-    global decision_engine, pdu_parser, redis_client
+    global decision_engine, pdu_parser, sqlite_client
     
     # Обробляємо лише пакети від клієнта до сервера і лише submit_sm
     if direction == "client_to_server":
@@ -157,7 +157,7 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
                 risk_score = result.get("risk_score", 0)
                 tags = result.get("tags", [])
                 
-                # Зберігаємо результат в Redis для подальшого аналізу
+                # Зберігаємо результат в SQLite для подальшого аналізу
                 try:
                     anomaly_data = {
                         "source": source_addr,
@@ -167,9 +167,9 @@ async def anomaly_detector_handler(pdu_data: bytes, direction: str, source: Any,
                         "decision": decision,
                         "tags": tags
                     }
-                    await redis_client.record_anomaly(anomaly_data)
+                    await sqlite_client.record_anomaly(anomaly_data)
                 except Exception as e:
-                    logger.error(f"Помилка запису аномалії в Redis: {e}")
+                    logger.error(f"Помилка запису аномалії в SQLite: {e}")
                 
                 if decision == "block":
                     # Логуємо блокування
@@ -302,13 +302,13 @@ async def init_components():
     """
     Ініціалізує основні компоненти системи
     """
-    global redis_client, decision_engine, pdu_parser
+    global sqlite_client, decision_engine, pdu_parser
     
-    # Ініціалізуємо Redis клієнт
-    redis_client = SQLiteClient()
-    await redis_client.connect()
+    # Ініціалізуємо SQLite клієнт
+    sqlite_client = SQLiteClient()
+    await sqlite_client.connect()
     
-    # Ініціалізуємо підсистеми, які використовують Redis
+    # Ініціалізуємо підсистеми, які використовують SQLite
     await init_rate_limiter()
     await init_blacklists_analyzer()
     
@@ -324,7 +324,7 @@ async def main():
     """
     Головна функція для запуску SMPP проксі з виявленням аномалій
     """
-    global decision_engine, pdu_parser, redis_client
+    global decision_engine, pdu_parser, sqlite_client
     
     parser = argparse.ArgumentParser(description="SMPP Anomaly Detector Server")
     
@@ -338,18 +338,15 @@ async def main():
     parser.add_argument("--key-path", help="Шлях до приватного ключа")
     parser.add_argument("--no-tls", action="store_true", help="Не використовувати TLS (тестовий режим)")
     
-    # Додаткові параметри для Redis
-    parser.add_argument("--redis-host", default=None, help="Хост Redis серверу")
-    parser.add_argument("--redis-port", type=int, default=None, help="Порт Redis серверу")
+    # Додаткові параметри для SQLite
+    parser.add_argument("--sqlite-db", default=None, help="Шлях до бази даних SQLite")
     
     args = parser.parse_args()
     
     try:
-        # Встановлюємо змінні оточення для Redis, якщо вказані
-        if args.redis_host:
-            os.environ["REDIS_HOST"] = args.redis_host
-        if args.redis_port:
-            os.environ["REDIS_PORT"] = str(args.redis_port)
+        # Встановлюємо змінні оточення для SQLite, якщо вказані
+        if args.sqlite_db:
+            os.environ["SQLITE_DB_PATH"] = args.sqlite_db
         
         # Ініціалізуємо компоненти системи
         await init_components()
@@ -379,7 +376,7 @@ async def main():
         
         logger.info(
             f"Запуск SMPP проксі-сервера на {args.host}:{args.port} -> {args.remote_host}:{args.remote_port}, "
-            f"TLS: {args.use_tls and not args.no_tls}, Redis: {os.environ.get('REDIS_HOST', 'localhost')}:{os.environ.get('REDIS_PORT', '6379')}"
+            f"TLS: {args.use_tls and not args.no_tls}, SQLite: {os.environ.get('SQLITE_DB_PATH', 'storage/anomaly_detector.db')}"
         )
         
         # Запускаємо проксі-сервер
@@ -390,14 +387,14 @@ async def main():
     except Exception as e:
         logger.error(f"Помилка запуску сервера: {e}")
     finally:
-        # Закриваємо з'єднання з Redis
-        if redis_client:
-            await redis_client.disconnect()
+        # Закриваємо з'єднання з SQLite
+        if sqlite_client:
+            await sqlite_client.disconnect()
 
 if __name__ == "__main__":
     # Глобальні змінні для обробника
     decision_engine = None
     pdu_parser = None
-    redis_client = None
+    sqlite_client = None
     
     asyncio.run(main())
